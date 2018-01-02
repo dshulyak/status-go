@@ -1,49 +1,22 @@
 package fake
 
 import (
-	"context"
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/stretchr/testify/mock"
+	gomock "github.com/golang/mock/gomock"
 )
 
-func NewTestServer() (*rpc.Server, *FakePublicTransactionPoolAPI) {
+func NewTestServer(ctrl *gomock.Controller) (*rpc.Server, *FakePublicTransactionPoolAPI) {
 	srv := rpc.NewServer()
-	svc := &FakePublicTransactionPoolAPI{mock.Mock{}}
+	svc := NewMockFakePublicTxApi(ctrl)
 	if err := srv.RegisterName("eth", svc); err != nil {
 		panic(err)
 	}
 	return srv, svc
 }
 
-type FakePublicTransactionPoolAPI struct {
-	mock.Mock
-}
-
-func (e *FakePublicTransactionPoolAPI) GasPrice(ctx context.Context) (*big.Int, error) {
-	calledArgs := e.Called(ctx)
-	return calledArgs.Get(0).(*big.Int), calledArgs.Error(1)
-}
-
-func (e *FakePublicTransactionPoolAPI) EstimateGas(ctx context.Context, args CallArgs) (*hexutil.Big, error) {
-	calledArgs := e.Called(ctx, args)
-	return calledArgs.Get(0).(*hexutil.Big), calledArgs.Error(1)
-}
-
-func (e *FakePublicTransactionPoolAPI) GetTransactionCount(ctx context.Context, address common.Address, blockNr rpc.BlockNumber) (*hexutil.Uint64, error) {
-	calledArgs := e.Called(ctx, address, blockNr)
-	return calledArgs.Get(0).(*hexutil.Uint64), calledArgs.Error(1)
-}
-
-func (e *FakePublicTransactionPoolAPI) SendRawTransaction(ctx context.Context, encodedTx hexutil.Bytes) (common.Hash, error) {
-	calledArgs := e.Called(ctx, encodedTx)
-	return calledArgs.Get(0).(common.Hash), calledArgs.Error(1)
-}
-
-// Copied from module go-ethereum/internal/ethapi
+// CallArgs copied from module go-ethereum/internal/ethapi
 type CallArgs struct {
 	From     common.Address  `json:"from"`
 	To       *common.Address `json:"to"`

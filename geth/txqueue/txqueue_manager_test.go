@@ -37,7 +37,8 @@ type TxQueueTestSuite struct {
 	accountManagerMock     *common.MockAccountManager
 	server                 *gethrpc.Server
 	client                 *gethrpc.Client
-	ethService             *fake.FakePublicTransactionPoolAPI
+	txServiceMockCtrl      *gomock.Controller
+	txServiceMock          *fake.MockFakePublicTxApi
 }
 
 func (s *TxQueueTestSuite) SetupTest() {
