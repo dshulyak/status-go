@@ -27,7 +27,7 @@ const (
 
 	defaultGas = 90000
 
-	cancelTimeout = time.Minute
+	defaultTimeout = time.Minute
 )
 
 // Send transaction response codes
@@ -51,7 +51,7 @@ type Manager struct {
 	nodeManager    common.NodeManager
 	accountManager common.AccountManager
 	txQueue        *TxQueue
-	ethTxClient    EthereumTransactor
+	ethTxClient    EthTransactor
 	addrLock       *AddrLocker
 }
 
@@ -198,7 +198,7 @@ func (m *Manager) completeTransaction(selectedAccount *common.SelectedExtKey, qu
 	}
 
 	// update transaction with nonce, gas price and gas estimates
-	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	m.addrLock.LockAddr(queuedTx.Args.From)
 	defer m.addrLock.UnlockAddr(queuedTx.Args.From)
@@ -207,17 +207,14 @@ func (m *Manager) completeTransaction(selectedAccount *common.SelectedExtKey, qu
 		return emptyHash, err
 	}
 	args := queuedTx.Args
-	var gasPrice *big.Int
+	gasPrice := (*big.Int)(args.GasPrice)
 	if args.GasPrice == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), cancelTimeout)
+		ctx, cancel = context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 		gasPrice, err = m.ethTxClient.SuggestGasPrice(ctx)
 		if err != nil {
 			return emptyHash, err
 		}
-
-	} else {
-		gasPrice = (*big.Int)(args.GasPrice)
 	}
 
 	chainID := big.NewInt(int64(config.NetworkID))
@@ -227,7 +224,7 @@ func (m *Manager) completeTransaction(selectedAccount *common.SelectedExtKey, qu
 	if args.To != nil {
 		toAddr = *args.To
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), cancelTimeout)
+	ctx, cancel = context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	gas, err := m.ethTxClient.EstimateGas(ctx, ethereum.CallMsg{
 		From:     args.From,
@@ -257,7 +254,7 @@ func (m *Manager) completeTransaction(selectedAccount *common.SelectedExtKey, qu
 	if err != nil {
 		return emptyHash, err
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), cancelTimeout)
+	ctx, cancel = context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	if err := m.ethTxClient.SendTransaction(ctx, signedTx); err != nil {
 		return emptyHash, err
