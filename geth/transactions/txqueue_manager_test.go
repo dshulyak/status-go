@@ -1,8 +1,7 @@
-package txqueue
+package transactions
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"sync"
 	"testing"
@@ -18,11 +17,10 @@ import (
 	"github.com/status-im/status-go/geth/common"
 	"github.com/status-im/status-go/geth/params"
 	"github.com/status-im/status-go/geth/rpc"
-	"github.com/status-im/status-go/geth/txqueue/fake"
+	"github.com/status-im/status-go/geth/transactions/fake"
+	"github.com/status-im/status-go/geth/transactions/queue"
 	. "github.com/status-im/status-go/testing"
 )
-
-var errTxAssumedSent = errors.New("assume tx is done")
 
 func TestTxQueueTestSuite(t *testing.T) {
 	suite.Run(t, new(TxQueueTestSuite))
@@ -95,19 +93,9 @@ func (s *TxQueueTestSuite) TestCompleteTransaction() {
 	txQueueManager.Start()
 	defer txQueueManager.Stop()
 
-	tx := txQueueManager.CreateTransaction(context.Background(), common.SendTxArgs{
+	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{
 		From: common.FromAddress(TestConfig.Account1.Address),
 		To:   common.ToAddress(TestConfig.Account2.Address),
-	})
-
-	// TransactionQueueHandler is required to enqueue a transaction.
-	txQueueManager.SetTransactionQueueHandler(func(queuedTx *common.QueuedTx) {
-		s.Equal(tx.ID, queuedTx.ID)
-	})
-
-	txQueueManager.SetTransactionReturnHandler(func(queuedTx *common.QueuedTx, err error) {
-		s.Equal(tx.ID, queuedTx.ID)
-		s.Equal(errTxAssumedSent, err)
 	})
 
 	err := txQueueManager.QueueTransaction(tx)
@@ -140,23 +128,14 @@ func (s *TxQueueTestSuite) TestCompleteTransactionMultipleTimes() {
 	s.setupTransactionPoolAPI(account, nonce, gas, nil)
 
 	txQueueManager := NewManager(s.nodeManagerMock, s.accountManagerMock)
+	txQueueManager.DisableNotificactions()
 
 	txQueueManager.Start()
 	defer txQueueManager.Stop()
 
-	tx := txQueueManager.CreateTransaction(context.Background(), common.SendTxArgs{
+	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{
 		From: common.FromAddress(TestConfig.Account1.Address),
 		To:   common.ToAddress(TestConfig.Account2.Address),
-	})
-
-	// TransactionQueueHandler is required to enqueue a transaction.
-	txQueueManager.SetTransactionQueueHandler(func(queuedTx *common.QueuedTx) {
-		s.Equal(tx.ID, queuedTx.ID)
-	})
-
-	txQueueManager.SetTransactionReturnHandler(func(queuedTx *common.QueuedTx, err error) {
-		s.Equal(tx.ID, queuedTx.ID)
-		s.NoError(err)
 	})
 
 	err := txQueueManager.QueueTransaction(tx)
@@ -175,7 +154,7 @@ func (s *TxQueueTestSuite) TestCompleteTransactionMultipleTimes() {
 			mu.Lock()
 			if err == nil {
 				completedTx++
-			} else if err == ErrQueuedTxInProgress {
+			} else if err == queue.ErrQueuedTxInProgress {
 				inprogressTx++
 			} else {
 				s.Fail("tx failed with unexpected error: ", err.Error())
@@ -203,33 +182,21 @@ func (s *TxQueueTestSuite) TestAccountMismatch() {
 	}, nil)
 
 	txQueueManager := NewManager(s.nodeManagerMock, s.accountManagerMock)
+	txQueueManager.DisableNotificactions()
 
 	txQueueManager.Start()
 	defer txQueueManager.Stop()
 
-	tx := txQueueManager.CreateTransaction(context.Background(), common.SendTxArgs{
+	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{
 		From: common.FromAddress(TestConfig.Account1.Address),
 		To:   common.ToAddress(TestConfig.Account2.Address),
-	})
-
-	// TransactionQueueHandler is required to enqueue a transaction.
-	txQueueManager.SetTransactionQueueHandler(func(queuedTx *common.QueuedTx) {
-		s.Equal(tx.ID, queuedTx.ID)
-	})
-
-	// Missmatched address is a recoverable error, that's why
-	// the return handler is called.
-	txQueueManager.SetTransactionReturnHandler(func(queuedTx *common.QueuedTx, err error) {
-		s.Equal(tx.ID, queuedTx.ID)
-		s.Equal(ErrInvalidCompleteTxSender, err)
-		s.Nil(tx.Err)
 	})
 
 	err := txQueueManager.QueueTransaction(tx)
 	s.NoError(err)
 
 	_, err = txQueueManager.CompleteTransaction(tx.ID, TestConfig.Account1.Password)
-	s.Equal(err, ErrInvalidCompleteTxSender)
+	s.Equal(err, queue.ErrInvalidCompleteTxSender)
 
 	// Transaction should stay in the queue as mismatched accounts
 	// is a recoverable error.
@@ -250,26 +217,14 @@ func (s *TxQueueTestSuite) TestInvalidPassword() {
 	s.setupTransactionPoolAPI(account, nonce, gas, keystore.ErrDecrypt)
 
 	txQueueManager := NewManager(s.nodeManagerMock, s.accountManagerMock)
+	txQueueManager.DisableNotificactions()
 
 	txQueueManager.Start()
 	defer txQueueManager.Stop()
 
-	tx := txQueueManager.CreateTransaction(context.Background(), common.SendTxArgs{
+	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{
 		From: common.FromAddress(TestConfig.Account1.Address),
 		To:   common.ToAddress(TestConfig.Account2.Address),
-	})
-
-	// TransactionQueueHandler is required to enqueue a transaction.
-	txQueueManager.SetTransactionQueueHandler(func(queuedTx *common.QueuedTx) {
-		s.Equal(tx.ID, queuedTx.ID)
-	})
-
-	// Missmatched address is a revocable error, that's why
-	// the return handler is called.
-	txQueueManager.SetTransactionReturnHandler(func(queuedTx *common.QueuedTx, err error) {
-		s.Equal(tx.ID, queuedTx.ID)
-		s.Equal(keystore.ErrDecrypt, err)
-		s.Nil(tx.Err)
 	})
 
 	err := txQueueManager.QueueTransaction(tx)
@@ -285,23 +240,14 @@ func (s *TxQueueTestSuite) TestInvalidPassword() {
 
 func (s *TxQueueTestSuite) TestDiscardTransaction() {
 	txQueueManager := NewManager(s.nodeManagerMock, s.accountManagerMock)
+	txQueueManager.DisableNotificactions()
 
 	txQueueManager.Start()
 	defer txQueueManager.Stop()
 
-	tx := txQueueManager.CreateTransaction(context.Background(), common.SendTxArgs{
+	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{
 		From: common.FromAddress(TestConfig.Account1.Address),
 		To:   common.ToAddress(TestConfig.Account2.Address),
-	})
-
-	// TransactionQueueHandler is required to enqueue a transaction.
-	txQueueManager.SetTransactionQueueHandler(func(queuedTx *common.QueuedTx) {
-		s.Equal(tx.ID, queuedTx.ID)
-	})
-
-	txQueueManager.SetTransactionReturnHandler(func(queuedTx *common.QueuedTx, err error) {
-		s.Equal(tx.ID, queuedTx.ID)
-		s.Equal(ErrQueuedTxDiscarded, err)
 	})
 
 	err := txQueueManager.QueueTransaction(tx)
@@ -313,9 +259,9 @@ func (s *TxQueueTestSuite) TestDiscardTransaction() {
 	}()
 
 	err = txQueueManager.WaitForTransaction(tx)
-	s.Equal(ErrQueuedTxDiscarded, err)
+	s.Equal(queue.ErrQueuedTxDiscarded, err)
 	// Check that error is assigned to the transaction.
-	s.Equal(ErrQueuedTxDiscarded, tx.Err)
+	s.Equal(queue.ErrQueuedTxDiscarded, tx.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
 }
