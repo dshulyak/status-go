@@ -100,7 +100,7 @@ func (q *TxQueue) Stop() {
 func (q *TxQueue) evictionLoop() {
 	defer HaltOnPanic()
 	evict := func() {
-		if len(q.transactions) >= DefaultTxQueueCap { // eviction is required to accommodate another/last item
+		if q.Count() >= DefaultTxQueueCap { // eviction is required to accommodate another/last item
 			q.Remove(<-q.evictableIDs)
 		}
 	}
@@ -193,6 +193,7 @@ func (q *TxQueue) Done(id common.QueuedTxID, hash gethcommon.Hash, err error) er
 
 func (q *TxQueue) done(tx *common.QueuedTx, hash gethcommon.Hash, err error) {
 	delete(q.inprogress, tx.ID)
+	tx.Err = err
 	// hash is updated only if err is nil
 	if err == nil {
 		q.remove(tx.ID)
@@ -206,7 +207,6 @@ func (q *TxQueue) done(tx *common.QueuedTx, hash gethcommon.Hash, err error) {
 		q.remove(tx.ID)
 		tx.Done <- struct{}{}
 	}
-	tx.Err = err
 }
 
 // Count returns number of currently queued transactions
