@@ -101,9 +101,11 @@ func (s *TxQueueTestSuite) TestCompleteTransaction() {
 	err := txQueueManager.QueueTransaction(tx)
 	s.NoError(err)
 
+	w := make(chan struct{})
 	go func() {
 		_, errCompleteTransaction := txQueueManager.CompleteTransaction(tx.ID, password)
 		s.NoError(errCompleteTransaction)
+		close(w)
 	}()
 
 	err = txQueueManager.WaitForTransaction(tx)
@@ -112,6 +114,7 @@ func (s *TxQueueTestSuite) TestCompleteTransaction() {
 	s.NoError(tx.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
+	<-w
 }
 
 func (s *TxQueueTestSuite) TestCompleteTransactionMultipleTimes() {
@@ -252,10 +255,11 @@ func (s *TxQueueTestSuite) TestDiscardTransaction() {
 
 	err := txQueueManager.QueueTransaction(tx)
 	s.NoError(err)
-
+	w := make(chan struct{})
 	go func() {
 		discardErr := txQueueManager.DiscardTransaction(tx.ID)
 		s.NoError(discardErr)
+		close(w)
 	}()
 
 	err = txQueueManager.WaitForTransaction(tx)
@@ -264,4 +268,5 @@ func (s *TxQueueTestSuite) TestDiscardTransaction() {
 	s.Equal(queue.ErrQueuedTxDiscarded, tx.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
+	<-w
 }
