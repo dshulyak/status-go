@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	gethcommon "github.com/ethereum/go-ethereum/common"
@@ -31,6 +30,7 @@ var (
 	ErrQueuedTxAlreadyProcessed = errors.New("transaction has been already processed")
 	//ErrInvalidCompleteTxSender - error transaction with invalid sender
 	ErrInvalidCompleteTxSender = errors.New("transaction can only be completed by the same account which created it")
+	ErrTxEvicted               = errors.New("transactions was evicted")
 )
 
 // remove from queue on any error (except for transient ones) and propagate
@@ -46,16 +46,14 @@ type empty struct{}
 type TxQueue struct {
 	mu            sync.RWMutex // to guard transactions map
 	transactions  map[common.QueuedTxID]*common.QueuedTx
+	lth           int
 	inprogress    map[common.QueuedTxID]empty
 	subscriptions map[common.QueuedTxID]chan common.QueuedTxResult
 
-	// TODO don't use another goroutine for eviction
-	evictableIDs  chan common.QueuedTxID
-	enqueueTicker chan struct{}
+	evictables []common.QueuedTxID
 
 	// when this channel is closed, all queue channels processing must cease (incoming queue, processing queued items etc)
-	stopped      chan struct{}
-	stoppedGroup sync.WaitGroup // to make sure that all routines are stopped
+	stopped chan struct{}
 }
 
 // NewTransactionQueue make new transaction queue
@@ -65,8 +63,7 @@ func NewQueue() *TxQueue {
 		transactions:  make(map[common.QueuedTxID]*common.QueuedTx),
 		inprogress:    make(map[common.QueuedTxID]empty),
 		subscriptions: make(map[common.QueuedTxID]chan common.QueuedTxResult),
-		evictableIDs:  make(chan common.QueuedTxID, DefaultTxQueueCap), // will be used to evict in FIFO
-		enqueueTicker: make(chan struct{}),
+		evictables:    make([]common.QueuedTxID, 0, DefaultTxQueueCap),
 	}
 }
 
@@ -79,8 +76,6 @@ func (q *TxQueue) Start() {
 	}
 
 	q.stopped = make(chan struct{})
-	q.stoppedGroup.Add(1)
-	go q.evictionLoop()
 }
 
 // Stop stops transaction enqueue and eviction loops
@@ -92,33 +87,9 @@ func (q *TxQueue) Stop() {
 	}
 
 	close(q.stopped) // stops all processing loops (enqueue, eviction etc)
-	q.stoppedGroup.Wait()
 	q.stopped = nil
 
 	log.Info("finally stopped transaction queue")
-}
-
-// evictionLoop frees up queue to accommodate another transaction item
-func (q *TxQueue) evictionLoop() {
-	defer HaltOnPanic()
-	evict := func() {
-		if q.Count() >= DefaultTxQueueCap { // eviction is required to accommodate another/last item
-			q.Remove(<-q.evictableIDs)
-		}
-	}
-
-	for {
-		select {
-		case <-time.After(250 * time.Millisecond): // do not wait for manual ticks, check queue regularly
-			evict()
-		case <-q.enqueueTicker: // when manually requested
-			evict()
-		case <-q.stopped:
-			log.Info("transaction queue's eviction loop stopped")
-			q.stoppedGroup.Done()
-			return
-		}
-	}
 }
 
 // Reset is to be used in tests only, as it simply creates new transaction map, w/o any cleanup of the previous one
@@ -127,29 +98,57 @@ func (q *TxQueue) Reset() {
 	defer q.mu.Unlock()
 
 	q.transactions = make(map[common.QueuedTxID]*common.QueuedTx)
-	q.evictableIDs = make(chan common.QueuedTxID, DefaultTxQueueCap)
 	q.inprogress = make(map[common.QueuedTxID]empty)
 }
 
 // Enqueue enqueues incoming transaction
 func (q *TxQueue) Enqueue(tx *common.QueuedTx) <-chan common.QueuedTxResult {
 	log.Info(fmt.Sprintf("enqueue transaction: %s", tx.ID))
-
-	log.Info("before enqueueTicker")
-	q.enqueueTicker <- struct{}{} // notify eviction loop that we are trying to insert new item
-	log.Info("before evictableIDs")
-	q.evictableIDs <- tx.ID // this will block when we hit DefaultTxQueueCap
-	log.Info("after evictableIDs")
-
 	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.lth == DefaultTxQueueCap {
+		// time for making room for new txs
+		q.evict()
+	}
+	q.lth++
+	q.evictables = append(q.evictables, tx.ID)
 	q.transactions[tx.ID] = tx
 	c := make(chan common.QueuedTxResult, 1)
 	q.subscriptions[tx.ID] = c
-	q.mu.Unlock()
-
 	// notify handler
 	log.Info("calling txEnqueueHandler")
 	return c
+}
+
+func (q *TxQueue) evict() {
+	var (
+		i    int
+		txID common.QueuedTxID
+	)
+	for i, txID = range q.evictables {
+		// if tx is not in store - we already processed it
+		// just remove
+		if _, ok := q.transactions[txID]; !ok {
+			break
+		}
+		// we never drop inprogress tx
+		if _, ok := q.inprogress[txID]; !ok {
+			break
+		}
+	}
+	if i == DefaultTxQueueCap {
+		// queue is full, all tx are in progress
+		// will return an error here
+		return
+	}
+	// do not drop tx silently
+	// consider to split it to evict soft and evict hard
+	// evict soft never drops unprocessed tx and usually executed
+	// when any tx is done
+	q.remove(txID)
+	copy(q.evictables[i:], q.evictables[i+1:])
+	q.evictables[len(q.evictables)-1] = ""
+	q.evictables = q.evictables[:len(q.evictables)-1]
 }
 
 // Get returns transaction by transaction identifier
@@ -178,6 +177,7 @@ func (q *TxQueue) remove(id common.QueuedTxID) {
 	delete(q.transactions, id)
 	delete(q.inprogress, id)
 	delete(q.subscriptions, id)
+	q.lth--
 }
 
 // Done removes transaction from queue if no error or error is not transient
@@ -188,23 +188,23 @@ func (q *TxQueue) Done(id common.QueuedTxID, hash gethcommon.Hash, err error) er
 	if tx, ok := q.transactions[id]; !ok {
 		return ErrQueuedTxIDNotFound
 	} else {
-		q.done(tx, hash, err)
+		q.done(tx.ID, hash, err)
 	}
 	return nil
 }
 
-func (q *TxQueue) done(tx *common.QueuedTx, hash gethcommon.Hash, err error) {
-	delete(q.inprogress, tx.ID)
+func (q *TxQueue) done(txID common.QueuedTxID, hash gethcommon.Hash, err error) {
+	delete(q.inprogress, txID)
 	// hash is updated only if err is nil
 	if err == nil {
-		q.subscriptions[tx.ID] <- common.QueuedTxResult{Hash: hash, Err: err}
-		q.remove(tx.ID)
+		q.subscriptions[txID] <- common.QueuedTxResult{Hash: hash, Err: err}
+		q.remove(txID)
 		return
 	}
 	_, transient := transientErrs[err.Error()]
 	if !transient {
-		q.subscriptions[tx.ID] <- common.QueuedTxResult{Err: err}
-		q.remove(tx.ID)
+		q.subscriptions[txID] <- common.QueuedTxResult{Err: err}
+		q.remove(txID)
 	}
 }
 
