@@ -69,40 +69,42 @@ func (m *Manager) TransactionQueue() common.TxQueue {
 }
 
 // QueueTransaction puts a transaction into the queue.
-func (m *Manager) QueueTransaction(tx *common.QueuedTx) error {
+func (m *Manager) QueueTransaction(tx *common.QueuedTx) <-chan common.QueuedTxResult {
 	to := "<nil>"
 	if tx.Args.To != nil {
 		to = tx.Args.To.Hex()
 	}
 	log.Info("queue a new transaction", "id", tx.ID, "from", tx.Args.From.Hex(), "to", to)
-	err := m.txQueue.Enqueue(tx)
+	c := m.txQueue.Enqueue(tx)
 	if m.notify {
 		NotifyOnEnqueue(tx)
 	}
-	return err
+	return c
 }
 
 func (m *Manager) txDone(tx *common.QueuedTx, hash gethcommon.Hash, err error) {
 	m.txQueue.Done(tx.ID, hash, err) //nolint: errcheck
 	if m.notify {
-		NotifyOnReturn(tx)
+		NotifyOnReturn(tx, err)
 	}
 }
 
 // WaitForTransaction adds a transaction to the queue and blocks
 // until it's completed, discarded or times out.
-func (m *Manager) WaitForTransaction(tx *common.QueuedTx) error {
+func (m *Manager) WaitForTransaction(tx *common.QueuedTx, c <-chan common.QueuedTxResult) common.QueuedTxResult {
 	log.Info("wait for transaction", "id", tx.ID)
 	// now wait up until transaction is:
 	// - completed (via CompleteQueuedTransaction),
 	// - discarded (via DiscardQueuedTransaction)
 	// - or times out
-	select {
-	case <-tx.Done:
-	case <-time.After(DefaultTxSendCompletionTimeout * time.Second):
-		m.txDone(tx, gethcommon.Hash{}, queue.ErrQueuedTxTimedOut)
+	for {
+		select {
+		case rst := <-c:
+			return rst
+		case <-time.After(DefaultTxSendCompletionTimeout * time.Second):
+			m.txDone(tx, gethcommon.Hash{}, queue.ErrQueuedTxTimedOut)
+		}
 	}
-	return tx.Err
 }
 
 // CompleteTransaction instructs backend to complete sending of a given transaction.
@@ -240,7 +242,7 @@ func (m *Manager) DiscardTransaction(id common.QueuedTxID) error {
 	}
 	err = m.txQueue.Done(id, gethcommon.Hash{}, queue.ErrQueuedTxDiscarded)
 	if m.notify {
-		NotifyOnReturn(tx)
+		NotifyOnReturn(tx, queue.ErrQueuedTxDiscarded)
 	}
 	return err
 }
@@ -271,13 +273,12 @@ func (m *Manager) SendTransactionRPCHandler(ctx context.Context, args ...interfa
 	rpcCall := common.RPCCall{Params: args}
 	tx := common.CreateTransaction(ctx, rpcCall.ToSendTxArgs())
 
-	if err := m.QueueTransaction(tx); err != nil {
-		return nil, err
-	}
+	c := m.QueueTransaction(tx)
 
-	if err := m.WaitForTransaction(tx); err != nil {
-		return nil, err
+	rst := m.WaitForTransaction(tx, c)
+	if rst.Err != nil {
+		return nil, rst.Err
 	}
-
-	return tx.Hash.Hex(), nil
+	// handle empty hash
+	return rst.Hash.Hex(), nil
 }

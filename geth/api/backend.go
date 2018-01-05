@@ -206,16 +206,14 @@ func (m *StatusBackend) SendTransaction(ctx context.Context, args common.SendTxA
 	}
 
 	tx := common.CreateTransaction(ctx, args)
+	c := m.txQueueManager.QueueTransaction(tx)
 
-	if err := m.txQueueManager.QueueTransaction(tx); err != nil {
-		return gethcommon.Hash{}, err
+	rst := m.txQueueManager.WaitForTransaction(tx, c)
+	if rst.Err != nil {
+		return gethcommon.Hash{}, rst.Err
 	}
 
-	if err := m.txQueueManager.WaitForTransaction(tx); err != nil {
-		return gethcommon.Hash{}, err
-	}
-
-	return tx.Hash, nil
+	return rst.Hash, nil
 }
 
 // CompleteTransaction instructs backend to complete sending of a given transaction

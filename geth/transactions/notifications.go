@@ -58,8 +58,8 @@ type ReturnSendTransactionEvent struct {
 }
 
 // NotifyOnReturn returns handler that processes responses from internal tx manager
-func NotifyOnReturn(queuedTx *common.QueuedTx) {
-	if queuedTx.Err == nil {
+func NotifyOnReturn(queuedTx *common.QueuedTx, err error) {
+	if err == nil {
 		return
 	}
 
@@ -75,8 +75,8 @@ func NotifyOnReturn(queuedTx *common.QueuedTx) {
 			ID:           string(queuedTx.ID),
 			Args:         queuedTx.Args,
 			MessageID:    common.MessageIDFromContext(queuedTx.Context),
-			ErrorMessage: queuedTx.Err.Error(),
-			ErrorCode:    sendTransactionErrorCode(queuedTx.Err),
+			ErrorMessage: err.Error(),
+			ErrorCode:    sendTransactionErrorCode(err),
 		},
 	})
 }

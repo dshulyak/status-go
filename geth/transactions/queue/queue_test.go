@@ -32,7 +32,7 @@ func (s *QueueTestSuite) TearDownTest() {
 
 func (s *QueueTestSuite) TestGetTransaction() {
 	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{})
-	s.NoError(s.queue.Enqueue(tx))
+	s.queue.Enqueue(tx)
 	enquedTx, err := s.queue.Get(tx.ID)
 	s.NoError(err)
 	s.Equal(tx, enquedTx)
@@ -42,29 +42,22 @@ func (s *QueueTestSuite) TestGetTransaction() {
 	s.Equal(ErrQueuedTxInProgress, err)
 }
 
-func (s *QueueTestSuite) TestGetProcessedTransaction() {
-	// enqueue will fail if transaction with hash will be enqueued
+func (s *QueueTestSuite) testDone(hash gethcommon.Hash, err error) (*common.QueuedTx, <-chan common.QueuedTxResult) {
 	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{})
-	tx.Hash = gethcommon.Hash{1}
-	s.Equal(ErrQueuedTxAlreadyProcessed, s.queue.Enqueue(tx))
-}
-
-func (s *QueueTestSuite) testDone(hash gethcommon.Hash, err error) *common.QueuedTx {
-	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{})
-	s.NoError(s.queue.Enqueue(tx))
+	c := s.queue.Enqueue(tx)
 	s.NoError(s.queue.Done(tx.ID, hash, err))
-	return tx
+	return tx, c
 }
 
 func (s *QueueTestSuite) TestDoneSuccess() {
 	hash := gethcommon.Hash{1}
-	tx := s.testDone(hash, nil)
-	s.NoError(tx.Err)
-	s.Equal(hash, tx.Hash)
-	s.False(s.queue.Has(tx.ID))
+	tx, c := s.testDone(hash, nil)
 	// event is sent only if transaction was removed from a queue
 	select {
-	case <-tx.Done:
+	case rst := <-c:
+		s.NoError(rst.Err)
+		s.Equal(hash, rst.Hash)
+		s.False(s.queue.Has(tx.ID))
 	default:
 		s.Fail("No event was sent to Done channel")
 	}
@@ -73,24 +66,23 @@ func (s *QueueTestSuite) TestDoneSuccess() {
 func (s *QueueTestSuite) TestDoneTransientError() {
 	hash := gethcommon.Hash{1}
 	err := keystore.ErrDecrypt
-	tx := s.testDone(hash, err)
-	s.Equal(keystore.ErrDecrypt, tx.Err)
-	s.NotEqual(hash, tx.Hash)
-	s.Equal(gethcommon.Hash{}, tx.Hash)
+	tx, _ := s.testDone(hash, err)
 	s.True(s.queue.Has(tx.ID))
+	_, inp := s.queue.inprogress[tx.ID]
+	s.False(inp)
 }
 
 func (s *QueueTestSuite) TestDoneError() {
 	hash := gethcommon.Hash{1}
 	err := errors.New("test")
-	tx := s.testDone(hash, err)
-	s.Equal(err, tx.Err)
-	s.NotEqual(hash, tx.Hash)
-	s.Equal(gethcommon.Hash{}, tx.Hash)
-	s.False(s.queue.Has(tx.ID))
+	tx, c := s.testDone(hash, err)
 	// event is sent only if transaction was removed from a queue
 	select {
-	case <-tx.Done:
+	case rst := <-c:
+		s.Equal(err, rst.Err)
+		s.NotEqual(hash, rst.Hash)
+		s.Equal(gethcommon.Hash{}, rst.Hash)
+		s.False(s.queue.Has(tx.ID))
 	default:
 		s.Fail("No event was sent to Done channel")
 	}
@@ -99,7 +91,7 @@ func (s *QueueTestSuite) TestDoneError() {
 func (s QueueTestSuite) TestMultipleDone() {
 	hash := gethcommon.Hash{1}
 	err := keystore.ErrDecrypt
-	tx := s.testDone(hash, err)
+	tx, _ := s.testDone(hash, err)
 	s.NoError(s.queue.Done(tx.ID, hash, nil))
 	s.Equal(ErrQueuedTxIDNotFound, s.queue.Done(tx.ID, hash, errors.New("timeout")))
 }
@@ -111,11 +103,11 @@ func (s *QueueTestSuite) TestEviction() {
 		if first == nil {
 			first = tx
 		}
-		s.NoError(s.queue.Enqueue(tx))
+		s.queue.Enqueue(tx)
 	}
 	s.Equal(DefaultTxQueueCap, s.queue.Count())
 	tx := common.CreateTransaction(context.Background(), common.SendTxArgs{})
-	s.NoError(s.queue.Enqueue(tx))
+	s.queue.Enqueue(tx)
 	s.Equal(DefaultTxQueueCap, s.queue.Count())
 	s.False(s.queue.Has(first.ID))
 }

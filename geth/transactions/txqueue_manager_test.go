@@ -98,8 +98,7 @@ func (s *TxQueueTestSuite) TestCompleteTransaction() {
 		To:   common.ToAddress(TestConfig.Account2.Address),
 	})
 
-	err := txQueueManager.QueueTransaction(tx)
-	s.NoError(err)
+	c := txQueueManager.QueueTransaction(tx)
 
 	w := make(chan struct{})
 	go func() {
@@ -108,10 +107,9 @@ func (s *TxQueueTestSuite) TestCompleteTransaction() {
 		close(w)
 	}()
 
-	err = txQueueManager.WaitForTransaction(tx)
-	s.NoError(err)
+	rst := txQueueManager.WaitForTransaction(tx, c)
 	// Check that error is assigned to the transaction.
-	s.NoError(tx.Err)
+	s.NoError(rst.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
 	<-w
@@ -141,8 +139,7 @@ func (s *TxQueueTestSuite) TestCompleteTransactionMultipleTimes() {
 		To:   common.ToAddress(TestConfig.Account2.Address),
 	})
 
-	err := txQueueManager.QueueTransaction(tx)
-	s.NoError(err)
+	c := txQueueManager.QueueTransaction(tx)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -166,10 +163,9 @@ func (s *TxQueueTestSuite) TestCompleteTransactionMultipleTimes() {
 		}()
 	}
 
-	err = txQueueManager.WaitForTransaction(tx)
-	s.NoError(err)
+	rst := txQueueManager.WaitForTransaction(tx, c)
 	// Check that error is assigned to the transaction.
-	s.NoError(tx.Err)
+	s.NoError(rst.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
 
@@ -195,10 +191,9 @@ func (s *TxQueueTestSuite) TestAccountMismatch() {
 		To:   common.ToAddress(TestConfig.Account2.Address),
 	})
 
-	err := txQueueManager.QueueTransaction(tx)
-	s.NoError(err)
+	txQueueManager.QueueTransaction(tx)
 
-	_, err = txQueueManager.CompleteTransaction(tx.ID, TestConfig.Account1.Password)
+	_, err := txQueueManager.CompleteTransaction(tx.ID, TestConfig.Account1.Password)
 	s.Equal(err, queue.ErrInvalidCompleteTxSender)
 
 	// Transaction should stay in the queue as mismatched accounts
@@ -230,10 +225,9 @@ func (s *TxQueueTestSuite) TestInvalidPassword() {
 		To:   common.ToAddress(TestConfig.Account2.Address),
 	})
 
-	err := txQueueManager.QueueTransaction(tx)
-	s.NoError(err)
+	txQueueManager.QueueTransaction(tx)
 
-	_, err = txQueueManager.CompleteTransaction(tx.ID, password)
+	_, err := txQueueManager.CompleteTransaction(tx.ID, password)
 	s.Equal(err.Error(), keystore.ErrDecrypt.Error())
 
 	// Transaction should stay in the queue as mismatched accounts
@@ -253,8 +247,7 @@ func (s *TxQueueTestSuite) TestDiscardTransaction() {
 		To:   common.ToAddress(TestConfig.Account2.Address),
 	})
 
-	err := txQueueManager.QueueTransaction(tx)
-	s.NoError(err)
+	c := txQueueManager.QueueTransaction(tx)
 	w := make(chan struct{})
 	go func() {
 		discardErr := txQueueManager.DiscardTransaction(tx.ID)
@@ -262,10 +255,8 @@ func (s *TxQueueTestSuite) TestDiscardTransaction() {
 		close(w)
 	}()
 
-	err = txQueueManager.WaitForTransaction(tx)
-	s.Equal(queue.ErrQueuedTxDiscarded, err)
-	// Check that error is assigned to the transaction.
-	s.Equal(queue.ErrQueuedTxDiscarded, tx.Err)
+	rst := txQueueManager.WaitForTransaction(tx, c)
+	s.Equal(queue.ErrQueuedTxDiscarded, rst.Err)
 	// Transaction should be already removed from the queue.
 	s.False(txQueueManager.TransactionQueue().Has(tx.ID))
 	<-w

@@ -183,12 +183,14 @@ type QueuedTxID string
 // QueuedTx holds enough information to complete the queued transaction.
 type QueuedTx struct {
 	ID      QueuedTxID
-	Hash    common.Hash
 	Context context.Context
 	Args    SendTxArgs
-	Done    chan struct{}
-	Discard chan struct{}
-	Err     error
+}
+
+type QueuedTxResult struct {
+	Hash common.Hash
+	Err  error
+	Tx   QueuedTx
 }
 
 // SendTxArgs represents the arguments to submit a new transaction into the transaction pool.
@@ -232,7 +234,7 @@ type TxQueueManager interface {
 	QueueTransaction(tx *QueuedTx) error
 
 	// WaitForTransactions blocks until transaction is completed, discarded or timed out.
-	WaitForTransaction(tx *QueuedTx) error
+	WaitForTransaction(tx *QueuedTx, c <-chan QueuedTxResult) error
 
 	SendTransactionRPCHandler(ctx context.Context, args ...interface{}) (interface{}, error)
 

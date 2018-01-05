@@ -44,9 +44,10 @@ type empty struct{}
 
 // TxQueue is capped container that holds pending transactions
 type TxQueue struct {
-	mu           sync.RWMutex // to guard transactions map
-	transactions map[common.QueuedTxID]*common.QueuedTx
-	inprogress   map[common.QueuedTxID]empty
+	mu            sync.RWMutex // to guard transactions map
+	transactions  map[common.QueuedTxID]*common.QueuedTx
+	inprogress    map[common.QueuedTxID]empty
+	subscriptions map[common.QueuedTxID]chan common.QueuedTxResult
 
 	// TODO don't use another goroutine for eviction
 	evictableIDs  chan common.QueuedTxID
@@ -63,6 +64,7 @@ func NewQueue() *TxQueue {
 	return &TxQueue{
 		transactions:  make(map[common.QueuedTxID]*common.QueuedTx),
 		inprogress:    make(map[common.QueuedTxID]empty),
+		subscriptions: make(map[common.QueuedTxID]chan common.QueuedTxResult),
 		evictableIDs:  make(chan common.QueuedTxID, DefaultTxQueueCap), // will be used to evict in FIFO
 		enqueueTicker: make(chan struct{}),
 	}
@@ -130,11 +132,8 @@ func (q *TxQueue) Reset() {
 }
 
 // Enqueue enqueues incoming transaction
-func (q *TxQueue) Enqueue(tx *common.QueuedTx) error {
+func (q *TxQueue) Enqueue(tx *common.QueuedTx) <-chan common.QueuedTxResult {
 	log.Info(fmt.Sprintf("enqueue transaction: %s", tx.ID))
-	if (tx.Hash != gethcommon.Hash{}) {
-		return ErrQueuedTxAlreadyProcessed
-	}
 
 	log.Info("before enqueueTicker")
 	q.enqueueTicker <- struct{}{} // notify eviction loop that we are trying to insert new item
@@ -144,11 +143,13 @@ func (q *TxQueue) Enqueue(tx *common.QueuedTx) error {
 
 	q.mu.Lock()
 	q.transactions[tx.ID] = tx
+	c := make(chan common.QueuedTxResult, 1)
+	q.subscriptions[tx.ID] = c
 	q.mu.Unlock()
 
 	// notify handler
 	log.Info("calling txEnqueueHandler")
-	return nil
+	return c
 }
 
 // Get returns transaction by transaction identifier
@@ -176,6 +177,7 @@ func (q *TxQueue) Remove(id common.QueuedTxID) {
 func (q *TxQueue) remove(id common.QueuedTxID) {
 	delete(q.transactions, id)
 	delete(q.inprogress, id)
+	delete(q.subscriptions, id)
 }
 
 // Done removes transaction from queue if no error or error is not transient
@@ -193,19 +195,16 @@ func (q *TxQueue) Done(id common.QueuedTxID, hash gethcommon.Hash, err error) er
 
 func (q *TxQueue) done(tx *common.QueuedTx, hash gethcommon.Hash, err error) {
 	delete(q.inprogress, tx.ID)
-	tx.Err = err
 	// hash is updated only if err is nil
 	if err == nil {
+		q.subscriptions[tx.ID] <- common.QueuedTxResult{Hash: hash, Err: err}
 		q.remove(tx.ID)
-		tx.Hash = hash
-		tx.Err = err
-		tx.Done <- struct{}{}
 		return
 	}
 	_, transient := transientErrs[err.Error()]
 	if !transient {
+		q.subscriptions[tx.ID] <- common.QueuedTxResult{Err: err}
 		q.remove(tx.ID)
-		tx.Done <- struct{}{}
 	}
 }
 
