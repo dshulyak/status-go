@@ -590,6 +590,7 @@ func (wh *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 	for {
 		// fetch the next packet
 		packet, err := rw.ReadMsg()
+		log.Info("message loop", "peer", p.peer.ID(), "packet", packet.Code)
 		if err != nil {
 			log.Warn("message loop", "peer", p.peer.ID(), "err", err)
 			return err
@@ -603,6 +604,16 @@ func (wh *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 		case statusCode:
 			// this should not happen, but no need to panic; just ignore this message.
 			log.Warn("unxepected status message received", "peer", p.peer.ID())
+		case hashesCode:
+			var hashes []common.Hash
+			err := packet.Decode(&hashes)
+			log.Info("message loop", "hashes", hashes, "err", err, "size", packet.Size)
+			if err != nil {
+				return errors.New("invalid haashes")
+			}
+			for _, hash := range hashes {
+				p.known.Add(hash)
+			}
 		case messagesCode:
 			// decode the contained envelopes
 			var envelope Envelope
@@ -646,6 +657,7 @@ func (wh *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 		default:
 			// New message types might be implemented in the future versions of Whisper.
 			// For forward compatibility, just ignore.
+			log.Error("packet code", packet.Code)
 		}
 
 		packet.Discard()
@@ -711,6 +723,13 @@ func (wh *Whisper) add(envelope *Envelope) (bool, error) {
 		}
 	}
 	wh.poolMu.Unlock()
+	if !alreadyCached {
+		wh.peerMu.RLock()
+		for p := range wh.peers {
+			p.addHash(hash)
+		}
+		wh.peerMu.RUnlock()
+	}
 
 	if alreadyCached {
 		log.Trace("whisper envelope already cached", "hash", envelope.Hash().Hex())
