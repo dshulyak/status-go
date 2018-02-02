@@ -16,7 +16,7 @@ func HaltOnPanic() {
 		signal.Send(signal.Envelope{
 			Type: signal.EventNodeCrashed,
 			Event: signal.NodeCrashEvent{
-				Error: err.Error(),
+				Error: err,
 			},
 		})
 

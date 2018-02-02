@@ -37,9 +37,40 @@ type Envelope struct {
 	Event interface{} `json:"event"`
 }
 
+// MarshalJSON implements the json.Marshaller interface.
+func (e *Envelope) MarshalJSON() ([]byte, error) {
+	type Alias Envelope
+	event, ok := e.Event.(NodeCrashEvent)
+
+	if ok && e.Type == EventNodeCrashed {
+		return json.Marshal(&struct {
+			Event NodeCrashEvent `json:"event"`
+			*Alias
+		}{
+			Event: event,
+			Alias: (*Alias)(e),
+		})
+	}
+
+	return json.Marshal(&struct {
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	})
+}
+
 // NodeCrashEvent is special kind of error, used to report node crashes
 type NodeCrashEvent struct {
-	Error string `json:"error"`
+	Error error `json:"error"`
+}
+
+// MarshalJSON implements the json.Marshaller interface.
+func (e *NodeCrashEvent) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		Error string `json:"error"`
+	}{
+		Error: e.Error.Error(),
+	})
 }
 
 // NodeNotificationHandler defines a handler able to process incoming node events.
