@@ -22,10 +22,10 @@ func TestNodeCrashEventJSONMarshalling(t *testing.T) {
 
 func TestEnvelopeJSONMarshalling(t *testing.T) {
 	errorMsg := "TestEnvelopeJSONMarshallingError"
-	expectedJSON := fmt.Sprintf(`{"event":{"error":"%s"},"type":"node.crashed"}`, errorMsg)
+	expectedJSON := fmt.Sprintf(`{"type":"node.crashed","event":{"error":"%s"}}`, errorMsg)
 	envelope := &Envelope{
 		Type: EventNodeCrashed,
-		Event: NodeCrashEvent{
+		Event: &NodeCrashEvent{
 			Error: errors.New(errorMsg),
 		},
 	}

@@ -9,8 +9,9 @@ import "C"
 import (
 	"encoding/json"
 
-	"github.com/status-im/status-go/geth/log"
 	"sync"
+
+	"github.com/status-im/status-go/geth/log"
 )
 
 const (
@@ -35,28 +36,6 @@ const (
 type Envelope struct {
 	Type  string      `json:"type"`
 	Event interface{} `json:"event"`
-}
-
-// MarshalJSON implements the json.Marshaller interface.
-func (e *Envelope) MarshalJSON() ([]byte, error) {
-	type Alias Envelope
-	event, ok := e.Event.(NodeCrashEvent)
-
-	if ok && e.Type == EventNodeCrashed {
-		return json.Marshal(&struct {
-			Event NodeCrashEvent `json:"event"`
-			*Alias
-		}{
-			Event: event,
-			Alias: (*Alias)(e),
-		})
-	}
-
-	return json.Marshal(&struct {
-		*Alias
-	}{
-		Alias: (*Alias)(e),
-	})
 }
 
 // NodeCrashEvent is special kind of error, used to report node crashes
