@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"fmt"
+	"net"
+
 	"github.com/robertkrimen/otto"
 	"github.com/stretchr/testify/suite"
-	"net"
 )
 
 func TestCellTestSuite(t *testing.T) {
@@ -103,7 +104,7 @@ func (s *CellTestSuite) TestCellFetchRace() {
 	s.NoError(err)
 
 	fetchCode := `fetch('%s?i=%d').then(function(r) {
- 		return r.text()
+		return r.text()
 	}).then(function(data) {
 		__captureSuccess(data)
 	}).catch(function (e) {
@@ -132,10 +133,6 @@ func (s *CellTestSuite) TestCellFetchRace() {
 	for i := 0; i < requestCount; i++ {
 		s.Equal(expected[fmt.Sprintf("%d", i)], true)
 	}
-
-	// There might be some tasks about to call `ready`,
-	// add a little delay before `TearDownTest` closes the loop.
-	time.Sleep(100 * time.Millisecond)
 }
 
 func (s *CellTestSuite) TestCellFetchErrorRace() {
