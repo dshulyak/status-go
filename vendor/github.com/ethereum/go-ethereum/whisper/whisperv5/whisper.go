@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/syndtr/goleveldb/leveldb/errors"
@@ -49,6 +50,12 @@ const (
 	minPowIdx     = iota // Minimal PoW required by the whisper node
 	maxMsgSizeIdx = iota // Maximal message length allowed by the whisper node
 	overflowIdx   = iota // Indicator of message queue overflow
+)
+
+var (
+	ingressAdvertisement = metrics.NewMeter("whisper/IngressAdvertisement")
+	egressAdvertisement  = metrics.NewMeter("whisper/EgressAdvertisement")
+	falseAdvertisement   = metrics.NewMeter("whisper/FalseAdvertisement")
 )
 
 // Whisper represents a dark communication interface through the Ethereum
@@ -605,6 +612,7 @@ func (wh *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 			// this should not happen, but no need to panic; just ignore this message.
 			log.Warn("unxepected status message received", "peer", p.peer.ID())
 		case hashesCode:
+			ingressAdvertisement.Mark(int64(packet.Size))
 			var hashes []common.Hash
 			err := packet.Decode(&hashes)
 			log.Info("message loop", "hashes", hashes, "err", err, "size", packet.Size)
@@ -621,6 +629,10 @@ func (wh *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 				log.Warn("failed to decode envelope, peer will be disconnected", "peer", p.peer.ID(), "err", err)
 				return errors.New("invalid envelope")
 			}
+			if p.advertised.Has(envelope.Hash()) {
+				falseAdvertisement.Mark(1)
+			}
+
 			wh.traceEnvelope(&envelope, !wh.isEnvelopeCached(envelope.Hash()), peerSource, p)
 			cached, err := wh.add(&envelope)
 			if err != nil {

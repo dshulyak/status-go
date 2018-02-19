@@ -66,7 +66,7 @@ const (
 	messageQueueLimit = 1024
 
 	expirationCycle   = time.Second
-	transmissionCycle = 300 * time.Millisecond
+	transmissionCycle = 250 * time.Millisecond
 
 	DefaultTTL     = 50 // seconds
 	SynchAllowance = 10 // seconds
