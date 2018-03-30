@@ -46,7 +46,7 @@ const (
 
 	// MaxPendingPeers is the maximum number of peers that can be pending in the
 	// handshake phase, counted separately for inbound and outbound connections.
-	MaxPendingPeers = 0
+	MaxPendingPeers = 100
 
 	// DefaultGas default amount of gas used for transactions
 	DefaultGas = 180000

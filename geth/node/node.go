@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/core"
@@ -233,7 +236,69 @@ func parseNodes(enodes []string) []*discover.Node {
 func parseNodesV5(enodes []string) []*discv5.Node {
 	nodes := make([]*discv5.Node, len(enodes))
 	for i, enode := range enodes {
-		nodes[i] = discv5.MustParseNode(enode)
+		node, err := parseWithHostname(enode)
+		if err != nil {
+			panic(err)
+		}
+		nodes[i] = node
 	}
 	return nodes
+}
+
+func parseWithHostname(rawurl string) (*discv5.Node, error) {
+	var (
+		id               discv5.NodeID
+		ip               net.IP
+		tcpPort, udpPort uint64
+	)
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "enode" {
+		return nil, errors.New("invalid URL scheme, want \"enode\"")
+	}
+	// Parse the Node ID from the user portion.
+	if u.User == nil {
+		return nil, errors.New("does not contain node ID")
+	}
+	if id, err = discv5.HexID(u.User.String()); err != nil {
+		return nil, fmt.Errorf("invalid node ID (%v)", err)
+	}
+	// Parse the IP address.
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return nil, fmt.Errorf("invalid host: %v", err)
+	}
+	resolvedIPs, err := net.LookupIP(host)
+	if err == nil {
+		for _, addr := range resolvedIPs {
+			if addr.To4() != nil {
+				ip = addr.To4()
+				break
+			}
+		}
+	} else {
+		if ip = net.ParseIP(host); ip == nil {
+			return nil, errors.New("invalid IP address")
+		}
+
+		// Ensure the IP is 4 bytes long for IPv4 addresses.
+		if ipv4 := ip.To4(); ipv4 != nil {
+			ip = ipv4
+		}
+	}
+	// Parse the port numbers.
+	if tcpPort, err = strconv.ParseUint(port, 10, 16); err != nil {
+		return nil, errors.New("invalid port")
+	}
+	udpPort = tcpPort
+	qv := u.Query()
+	if qv.Get("discport") != "" {
+		udpPort, err = strconv.ParseUint(qv.Get("discport"), 10, 16)
+		if err != nil {
+			return nil, errors.New("invalid discport in query")
+		}
+	}
+	return discv5.NewNode(id, ip, uint16(udpPort), uint16(tcpPort)), nil
 }
